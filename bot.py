@@ -2,18 +2,26 @@
 import os
 import re
 import requests
+import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Carga las variables de entorno desde .env
+# --- CONFIGURACIÓN DE LOGGING ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Carga las variables de entorno desde .env (para desarrollo local)
 load_dotenv()
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DEL BOT ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 KITSU_API_BASE_URL = "https://kitsu.io/api/edge"
-LAST_ANIME_ID_FILE = "last_anime_id.txt"
+LAST_ANIME_ID_FILE = "/tmp/last_anime_id.txt" # Usar /tmp para compatibilidad con Render
 
 # --- LÓGICA DEL BOT ---
 def escape_markdown_v2(text: str) -> str:
@@ -35,14 +43,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
     """(Tarea automática) Revisa si hay nuevos animes y notifica."""
-    print("Revisando animes (tarea automática)... ")
+    logger.info("Revisando animes (tarea automática)...")
     try:
         params = {"sort": "-createdAt", "page[limit]": 1}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
         animes = response.json().get("data", [])
         if not animes:
-            print("Tarea automática: No se pudo obtener el anime más reciente de Kitsu.")
+            logger.warning("Tarea automática: No se pudo obtener el anime más reciente de Kitsu.")
             return
         
         latest_anime = animes[0]
@@ -56,7 +64,7 @@ async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
                     last_sent_id = int(content)
 
         if latest_anime_id > last_sent_id:
-            print(f"¡Nuevo anime encontrado! ID: {latest_anime_id}")
+            logger.info(f"¡Nuevo anime encontrado! ID: {latest_anime_id}")
             attrs = latest_anime.get("attributes", {})
             title = escape_markdown_v2(attrs.get("canonicalTitle", "N/A"))
             synopsis = escape_markdown_v2((attrs.get("synopsis") or "No disponible")[:400])
@@ -72,13 +80,13 @@ async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
             with open(LAST_ANIME_ID_FILE, 'w') as f:
                 f.write(str(latest_anime_id))
         else:
-            print("Tarea automática: No hay animes nuevos.")
+            logger.info("Tarea automática: No hay animes nuevos.")
 
     except Exception as e:
-        print(f"Error en la tarea automática (check_new_anime): {e}")
+        logger.error(f"Error en la tarea automática (check_new_anime): {e}", exc_info=True)
 
 async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para el comando /recent. Envía los 5 animes más recientes."""
+    """Handler para el comando /recent."""
     await update.message.reply_text("Buscando los 5 animes más recientes en Kitsu...")
     try:
         params = {"sort": "-createdAt", "page[limit]": 5}
@@ -86,7 +94,7 @@ async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response.raise_for_status()
         animes = response.json().get("data", [])
         if not animes:
-            await update.message.reply_text("No se pudieron obtener los animes recientes de Kitsu.")
+            await update.message.reply_text("No se pudieron obtener los animes recientes.")
             return
         await update.message.reply_text(f"Estos son los {len(animes)} animes más recientes:")
         for anime in animes:
@@ -98,27 +106,21 @@ async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = f"*{title}*\n\n{synopsis}\.\.\.\n\n[Ver más en Kitsu]({kitsu_link})"
             await context.bot.send_photo(chat_id=update.message.chat_id, photo=poster, caption=message, parse_mode='MarkdownV2')
     except Exception as e:
-        print(f"Error en /recent: {e}")
+        logger.error(f"Error en /recent: {e}", exc_info=True)
         await update.message.reply_text("Ocurrió un error al buscar los animes recientes.")
 
 async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /trending. Muestra los animes en emisión más populares."""
+    """Handler para /trending."""
     await update.message.reply_text("Buscando los 5 animes más populares en emisión...")
     try:
-        params = {
-            "filter[status]": "current",
-            "sort": "popularityRank",
-            "page[limit]": 5
-        }
+        params = {"filter[status]": "current", "sort": "popularityRank", "page[limit]": 5}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
         animes = response.json().get("data", [])
-
         if not animes:
-            await update.message.reply_text("No se pudieron obtener los animes populares en emisión de Kitsu.")
+            await update.message.reply_text("No se pudieron obtener los animes populares.")
             return
-
-        await update.message.reply_text(f"Estos son los {len(animes)} animes en emisión más populares del momento:")
+        await update.message.reply_text(f"Estos son los {len(animes)} animes en emisión más populares:")
         for anime in animes:
             attrs = anime.get("attributes", {})
             title = escape_markdown_v2(attrs.get("canonicalTitle", "N/A"))
@@ -127,31 +129,26 @@ async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
             poster = attrs.get("posterImage", {}).get("small")
             caption = f"*{title}*\n\n{synopsis}\.\.\.\n\n[Ver más en Kitsu]({kitsu_link})"
             await context.bot.send_photo(chat_id=update.message.chat_id, photo=poster, caption=caption, parse_mode='MarkdownV2')
-
     except Exception as e:
-        print(f"Error en /trending: {e}")
+        logger.error(f"Error en /trending: {e}", exc_info=True)
         await update.message.reply_text("Ocurrió un error al buscar los animes en tendencia.")
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para /search. Lógica simplificada y robusta."""
+    """Handler para /search."""
     if not context.args:
-        await update.message.reply_text("Por favor, dime qué anime quieres buscar. Ejemplo: /search Cowboy Bebop")
+        await update.message.reply_text("Uso: /search <nombre del anime>")
         return
-
     search_term = ' '.join(context.args)
     await update.message.reply_text(f'Buscando animes para "{search_term}"...')
-
     try:
         params = {"filter[text]": search_term, "page[limit]": 5}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
         animes = response.json().get("data", [])
-
         if not animes:
-            await update.message.reply_text(f'No encontré ningún anime que coincida con "{search_term}".')
+            await update.message.reply_text(f'No encontré resultados para "{search_term}".')
             return
-
-        await update.message.reply_text(f'Encontré estos {len(animes)} resultados para "{search_term}":')
+        await update.message.reply_text(f'Encontré {len(animes)} resultados:')
         for anime in animes:
             attrs = anime.get("attributes", {})
             title = escape_markdown_v2(attrs.get("canonicalTitle", "N/A"))
@@ -160,16 +157,26 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             poster = attrs.get("posterImage", {}).get("small")
             caption = f"*{title}*\n\n{synopsis}\.\.\.\n\n[Ver más en Kitsu]({kitsu_link})"
             await context.bot.send_photo(chat_id=update.message.chat_id, photo=poster, caption=caption, parse_mode='MarkdownV2')
-
     except Exception as e:
-        print(f"Error en /search: {e}")
+        logger.error(f"Error en /search: {e}", exc_info=True)
         await update.message.reply_text("Ocurrió un error al realizar la búsqueda.")
 
-def main():
+def run_bot():
     """Configura y ejecuta el bot de Telegram."""
+    logger.info("Iniciando configuración del bot...")
+    
+    # --- VERIFICACIÓN CRUCIAL DE VARIABLES DE ENTORNO ---
     if not TELEGRAM_BOT_TOKEN:
-        print("Error: La variable de entorno TELEGRAM_BOT_TOKEN no está configurada.")
+        logger.critical("FATAL: La variable de entorno TELEGRAM_BOT_TOKEN no está configurada.")
         return
+    else:
+        logger.info(f"TELEGRAM_BOT_TOKEN encontrado (comienza con: {TELEGRAM_BOT_TOKEN[:4]}...).")
+
+    if not TELEGRAM_CHAT_ID:
+        logger.critical("FATAL: La variable de entorno TELEGRAM_CHAT_ID no está configurada.")
+        return
+    else:
+        logger.info("TELEGRAM_CHAT_ID encontrado.")
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -181,8 +188,6 @@ def main():
     job_queue = application.job_queue
     job_queue.run_repeating(check_new_anime, interval=3600, first=10)
 
-    print("Bot completamente restaurado. Iniciado y escuchando...")
+    logger.info("Bot configurado. Iniciando polling...")
     application.run_polling()
-
-if __name__ == "__main__":
-    main()
+    logger.info("El bot se ha detenido.")
