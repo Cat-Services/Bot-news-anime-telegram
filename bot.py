@@ -1,4 +1,4 @@
-
+'''
 import os
 import re
 import logging
@@ -19,7 +19,9 @@ def escape_markdown_v2(text: str) -> str:
     """Escapa los caracteres especiales para el formato MarkdownV2 de Telegram."""
     if not isinstance(text, str):
         return ""
-    return re.sub(r'([_*[\\\]()~`>#+\\-=|{}.!])', r'\\\\\\1', text)
+    # El guion '-' debe ir al final del set para ser tratado como un literal.
+    # La cadena de reemplazo debe ser r'\\1' para escapar el carácter encontrado.
+    return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', text)
 
 # --- HANDLERS DE COMANDOS (LÓGICA DEL BOT) ---
 
@@ -160,3 +162,4 @@ async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
             logger.info("Tarea automática: No hay animes nuevos.")
     except Exception as e:
         logger.error(f"Error en la tarea automática (check_new_anime): {e}", exc_info=True)
+''
