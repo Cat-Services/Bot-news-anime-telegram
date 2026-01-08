@@ -3,6 +3,7 @@ import os
 import logging
 import asyncio
 import threading
+from multiprocessing import Event
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, CommandHandler
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
+# --- EVENTO DE SINCRONIZACIÓN ---
+# Esta bandera es visible entre el proceso maestro de Gunicorn y sus workers.
+bot_initialized_event = Event()
+
 # --- INICIALIZACIÓN DE LA APLICACIÓN DE TELEGRAM ---
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -35,17 +40,27 @@ def index():
 @app.route("/webhook", methods=["POST"])
 async def webhook():
     """Esta ruta recibe las actualizaciones de Telegram."""
+    logger.info("Webhook recibido. Esperando a que el bot esté inicializado...")
+    # Detiene la ejecución aquí hasta que el hilo de fondo llame a bot_initialized_event.set()
+    # El timeout es una salvaguarda para no bloquear indefinidamente si algo sale mal.
+    is_set = await asyncio.to_thread(bot_initialized_event.wait, timeout=30)
+    
+    if not is_set:
+        logger.error("Timeout esperando la inicialización del bot. Abortando webhook.")
+        return "Error: Timeout de inicialización", 500
+
+    logger.info("Bot inicializado. Procesando actualización...")
     try:
         update = Update.de_json(request.get_json(force=True), application.bot)
         await application.process_update(update)
     except Exception as e:
-        logger.error(f"Error en el webhook: {e}", exc_info=True)
+        logger.error(f"Error procesando el webhook: {e}", exc_info=True)
     return "OK", 200
 
 async def setup_and_start_bot():
     """
-    Configura y arranca todo lo relacionado con el bot:
-    - Inicialización, registro de handlers, configuración del webhook y inicio de la job_queue.
+    Configura y arranca todo lo relacionado con el bot. Al final, levanta
+    la bandera de 'bot_initialized_event' para notificar a los workers.
     """
     logger.info("1. Inicializando la aplicación del bot...")
     await application.initialize()
@@ -74,11 +89,14 @@ async def setup_and_start_bot():
     logger.info("5. Iniciando la aplicación del bot (para que la job_queue se ejecute)...")
     await application.start()
     logger.info("La aplicación del bot se ha iniciado.")
+    
+    logger.info("===> ¡BOT LISTO! Levantando bandera de inicialización para los workers. <===")
+    bot_initialized_event.set()
 
 def run_bot_in_background():
     """
     Se ejecuta en un hilo separado. Crea un nuevo loop de eventos de asyncio
-    y lo mantiene vivo para las tareas de fondo del bot (como la JobQueue).
+    y lo mantiene vivo para las tareas de fondo del bot.
     """
     logger.info("Iniciando hilo de fondo para el bot...")
     loop = asyncio.new_event_loop()
@@ -96,17 +114,9 @@ def run_bot_in_background():
         loop.close()
 
 # --- ARRANQUE ---
-# Cuando Gunicorn importa este archivo, no es __main__.
-# Esto nos permite iniciar el hilo de fondo del bot tan pronto como Gunicorn carga el worker.
+# Esto asegura que el hilo solo se inicie una vez en el proceso maestro de Gunicorn.
 if __name__ != '__main__':
     if not any(t.name == 'BotThread' for t in threading.enumerate()):
+        logger.info("Proceso maestro de Gunicorn detectado. Iniciando hilo del bot.")
         bot_thread = threading.Thread(target=run_bot_in_background, name='BotThread', daemon=True)
         bot_thread.start()
-
-# Para desarrollo local (ejecutando 'python main.py')
-if __name__ == '__main__':
-    logger.info("Ejecutando en modo de desarrollo local.")
-    if not any(t.name == 'BotThread' for t in threading.enumerate()):
-        bot_thread = threading.Thread(target=run_bot_in_background, name='BotThread', daemon=True)
-        bot_thread.start()
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
