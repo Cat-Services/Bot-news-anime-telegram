@@ -1,4 +1,3 @@
-'''
 import os
 import re
 import logging
@@ -20,7 +19,6 @@ def escape_markdown_v2(text: str) -> str:
     if not isinstance(text, str):
         return ""
     # El guion '-' debe ir al final del set para ser tratado como un literal.
-    # La cadena de reemplazo debe ser r'\\1' para escapar el carácter encontrado.
     return re.sub(r'([_*[\]()~`>#+=|{}.!-])', r'\\\1', text)
 
 # --- HANDLERS DE COMANDOS (LÓGICA DEL BOT) ---
@@ -40,7 +38,6 @@ async def recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para el comando /recent."""
     await update.message.reply_text("Buscando los 5 animes más recientes en Kitsu...")
     try:
-        # Lógica de la API... (sin cambios)
         params = {"sort": "-createdAt", "page[limit]": 5}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
@@ -66,7 +63,6 @@ async def trending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler para /trending."""
     await update.message.reply_text("Buscando los 5 animes más populares en emisión...")
     try:
-        # Lógica de la API... (sin cambios)
         params = {"filter[status]": "current", "sort": "popularityRank", "page[limit]": 5}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
@@ -96,7 +92,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     search_term = ' '.join(context.args)
     await update.message.reply_text(f'Buscando animes para "{search_term}"...')
     try:
-        # Lógica de la API... (sin cambios)
         params = {"filter[text]": search_term, "page[limit]": 5}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
@@ -124,7 +119,6 @@ async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
     """(Tarea automática) Revisa si hay nuevos animes y notifica."""
     logger.info("Revisando animes (tarea automática)...")
     try:
-        # Lógica de la API... (sin cambios)
         params = {"sort": "-createdAt", "page[limit]": 1}
         response = requests.get(f"{KITSU_API_BASE_URL}/anime", params=params)
         response.raise_for_status()
@@ -162,4 +156,3 @@ async def check_new_anime(context: ContextTypes.DEFAULT_TYPE):
             logger.info("Tarea automática: No hay animes nuevos.")
     except Exception as e:
         logger.error(f"Error en la tarea automática (check_new_anime): {e}", exc_info=True)
-''
